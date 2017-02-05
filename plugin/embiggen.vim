@@ -1,3 +1,8 @@
+function! Bind(f, ...)
+  let args = deepcopy(a:000)
+  return function(a:f, args)
+endfunction
+
 function! ResetResize()
   if exists('g:embiggen')
     unlet g:embiggen
@@ -15,10 +20,9 @@ function! Reversed(list)
     return new_list
 endfunction
 
-function! Mapped(fn, l, ...)
-    let params = a:0 > 0 ? a:1 : []
+function! Mapped(fn, l)
     let new_list = deepcopy(a:l)
-    call map(new_list, string(a:fn) . '(' . join(['v:val'] + params, ',') . ')')
+    call map(new_list, {k,v->a:fn(v)})
     return new_list
 endfunction
 
@@ -26,17 +30,16 @@ function! Add(a,b)
   return a:a + a:b
 endfunction
 
-function! Reduced(func_name, acc, list)
+function! Reduced(func, acc, list)
   let acc  = a:acc
-  let Func = function(a:func_name)
   for item in a:list
-    let acc = Func(acc, item)
+    let acc = a:func(acc, item)
   endfor
   return acc
 endfunction
 
 function! Sum(list)
-  return Reduced('Add', 0, a:list)
+  return Reduced(function('Add'), 0, a:list)
 endfunction
 
 function! WindowsInDirection(dir)
@@ -74,18 +77,6 @@ function! ResizeWindow(window, dir, size)
   else
     exe "resize " . float2nr(round(a:size))
   endif
-endfunction
-
-function! WindowWithSize(window, sizes)
-  return {'window': a:window, 'size': a:sizes[a:window]}
-endfunction
-
-function! GetWidth(window_info)
-  return a:window_info['size']['width']
-endfunction
-
-function! GetHeight(window_info)
-  return a:window_info['size']['height']
 endfunction
 
 function! Min(float_list)
@@ -129,16 +120,15 @@ function! DictFrom(func, keys)
   return output
 endfunction
 
-function! MappedValues(func, input, ...)
-  let output = {}
-  let params = a:0 > 0 ? a:1 : []
-  for i in items(a:input)
-    let output[i[0]] = Mapped(a:func, (i[1]), params)
+function! MappedValues(func, input)
+  let output={}
+  for [k,v] in items(a:input)
+    let output[k] = a:func(v)
   endfor
   return output
 endfunction
 
-function! Resized(window_info, width_frac, height_frac)
+function! Resized(width_frac, height_frac, window_info)
   return {
   \  'window': a:window_info['window'],
   \  'size':   {
@@ -163,12 +153,14 @@ function! Resize(plus)
   let zoom = g:embiggen.zoom + a:plus
   let ratio = pow((4.0/3.0), zoom)
 
-  let wins_size = MappedValues(function('WindowWithSize'), DictFrom(function('WindowsInDirection'), ['left','right','up','down']), [g:embiggen.size])
+  let wins_size = MappedValues({v->Mapped({w->{'window': w, 'size': g:embiggen.size[w]}},v)}, DictFrom(function('WindowsInDirection'), ['left','right','up','down']))
+  let g:wins_size = wins_size
+
 
   let original_width  = g:embiggen.size[win].width
   let original_height = g:embiggen.size[win].height
-  let total_width  = Sum(Mapped(function('GetWidth'),  wins_size.left + wins_size.right)) + original_width
-  let total_height = Sum(Mapped(function('GetHeight'), wins_size.up   + wins_size.down))  + original_height
+  let total_width  = Sum(Mapped({s->s.size.width},  wins_size.left + wins_size.right)) + original_width
+  let total_height = Sum(Mapped({s->s.size.height}, wins_size.up   + wins_size.down))  + original_height
 
   if len(wins_size.left + wins_size.right) == 0
     let new_desired_width = original_width
@@ -186,7 +178,7 @@ function! Resize(plus)
     let height_ratio = 1.0 * (total_height - new_desired_height) / (total_height - original_height)
   endif
 
-  let resized = MappedValues(function('Resized'), wins_size, [width_ratio, height_ratio])
+  let resized = MappedValues({v->Mapped({w->Resized(width_ratio, height_ratio, w)},v)}, wins_size)
 
   let new_desired_size = {
   \  'window': win,
