@@ -3,6 +3,67 @@ function! Bind(f, ...)
   return function(a:f, args)
 endfunction
 
+function! F(...)
+  let Func = a:000[0]
+  if a:0 == 1
+    return Func
+  end
+  let funcs = a:000[1:]
+  return {list->function('F',funcs)()(Func(list))}
+endfunction
+
+function! FMap(f)
+  return {l->Mapped(a:f,l)}
+endfunction
+
+function! FSum(f)
+  return F(
+  \  FMap(a:f),
+  \  FReduce({a,b->a+b},0)
+  \)
+endfunction
+
+function! FReduce(func, acc)
+  return {l->Reduced(a:func, a:acc, l)}
+endfunction
+
+function! FMapValues(f)
+  return {l->MappedValues(a:f,l)}
+endfunction
+
+function! FToDict(f)
+  return {l->DictFrom(a:f,l)}
+endfunction
+
+function! FUpdateAt(f, path)
+  return {d->UpdatedAt(d, a:f, a:path)}
+endfunction
+
+function! UpdatedAt(d, f, path)
+  let new_d = deepcopy(a:d)
+  return UpdateAt(new_d, a:f, a:path)
+endfunction
+
+function! GetAt(d, path)
+  let key = a:path[0]
+  if len(a:path) == 1
+    return a:d[key]
+  endif
+  let path = a:path[1:]
+  return GetAt(a:d[key], path)
+endfunction
+
+function! UpdateAt(d, f, path)
+  let key = a:path[0]
+  if len(a:path) == 1
+    let a:d[key] = a:f(a:d[key])
+    return a:d
+  endif
+  let path = a:path[1:]
+  let a:d[key] = UpdateAt(a:d[key], a:f, path)
+  return a:d
+endfunction
+
 function! ResetResize()
   if exists('g:embiggen')
     unlet g:embiggen
@@ -15,19 +76,15 @@ function! WinEqualSize()
 endfunction
 
 function! Reversed(list)
-    let new_list = deepcopy(a:list)
-    call reverse(new_list)
-    return new_list
+  let new_list = deepcopy(a:list)
+  call reverse(new_list)
+  return new_list
 endfunction
 
 function! Mapped(fn, l)
-    let new_list = deepcopy(a:l)
-    call map(new_list, {k,v->a:fn(v)})
-    return new_list
-endfunction
-
-function! Add(a,b)
-  return a:a + a:b
+  let new_list = deepcopy(a:l)
+  call map(new_list, {k,v->a:fn(v)})
+  return new_list
 endfunction
 
 function! Reduced(func, acc, list)
@@ -38,8 +95,40 @@ function! Reduced(func, acc, list)
   return acc
 endfunction
 
-function! Sum(list)
-  return Reduced(function('Add'), 0, a:list)
+function! DictFrom(func, keys)
+  let output = {}
+  for k in a:keys
+    let output[k] = a:func(k)
+  endfor
+  return output
+endfunction
+
+function! MappedValues(func, input)
+  let output={}
+  for [k,v] in items(a:input)
+    let output[k] = a:func(v)
+  endfor
+  return output
+endfunction
+
+function! Min(float_list)
+  let smallest = a:float_list[0]
+  for f in a:float_list
+    let smallest = f < smallest ? f : smallest
+  endfor
+  return smallest
+endfunction
+
+function! Max(float_list)
+  let biggest = a:float_list[0]
+  for f in a:float_list
+    let biggest = f > biggest ? f : biggest
+  endfor
+  return biggest
+endfunction
+
+function! Clamp(v,from,to)
+  return Max([Min([a:v,a:to]),a:from])
 endfunction
 
 function! WindowsInDirection(dir)
@@ -79,22 +168,6 @@ function! ResizeWindow(window, dir, size)
   endif
 endfunction
 
-function! Min(float_list)
-  let smallest = a:float_list[0]
-  for f in a:float_list
-    let smallest = f < smallest ? f : smallest
-  endfor
-  return smallest
-endfunction
-
-function! Max(float_list)
-  let biggest = a:float_list[0]
-  for f in a:float_list
-    let biggest = f > biggest ? f : biggest
-  endfor
-  return biggest
-endfunction
-
 function! AnyDifferent(a, b)
   for i in items(a:a)
     if !has_key(a:b, i[0]) || a:b[i[0]].width != i[1].width || a:b[i[0]].height != i[1].height
@@ -112,32 +185,6 @@ function! GetSize()
   return size
 endfunction
 
-function! DictFrom(func, keys)
-  let output = {}
-  for k in a:keys
-    let output[k] = a:func(k)
-  endfor
-  return output
-endfunction
-
-function! MappedValues(func, input)
-  let output={}
-  for [k,v] in items(a:input)
-    let output[k] = a:func(v)
-  endfor
-  return output
-endfunction
-
-function! Resized(width_frac, height_frac, window_info)
-  return {
-  \  'window': a:window_info['window'],
-  \  'size':   {
-  \    'width':  (a:window_info['size']['width']  * a:width_frac),
-  \    'height': (a:window_info['size']['height'] * a:height_frac)
-  \  }
-  \}
-endfunction
-
 function! Resize(plus)
   let win          = win_getid()
   let initial_size = GetSize()
@@ -153,20 +200,23 @@ function! Resize(plus)
   let zoom = g:embiggen.zoom + a:plus
   let ratio = pow((4.0/3.0), zoom)
 
-  let wins_size = MappedValues({v->Mapped({w->{'window': w, 'size': g:embiggen.size[w]}},v)}, DictFrom(function('WindowsInDirection'), ['left','right','up','down']))
-  let g:wins_size = wins_size
-
+  let wins_size = F(
+  \  FToDict({d->WindowsInDirection(d)}),
+  \  FMapValues(
+  \    FMap({w->{'window': w, 'size': g:embiggen.size[w]}})
+  \  )
+  \)(['left','right','up','down'])
 
   let original_width  = g:embiggen.size[win].width
   let original_height = g:embiggen.size[win].height
-  let total_width  = Sum(Mapped({s->s.size.width},  wins_size.left + wins_size.right)) + original_width
-  let total_height = Sum(Mapped({s->s.size.height}, wins_size.up   + wins_size.down))  + original_height
+  let total_width  = FSum({s->s.size.width})(wins_size.left + wins_size.right) + original_width
+  let total_height = FSum({s->s.size.height})(wins_size.up + wins_size.down) + original_height
 
   if len(wins_size.left + wins_size.right) == 0
     let new_desired_width = original_width
     let width_ratio = 1.0
   else
-    let new_desired_width  = Max([Min([original_width*ratio,  total_width]),0])
+    let new_desired_width  = Clamp(original_width*ratio, 0, total_width)
     let width_ratio = 1.0 * (total_width  - new_desired_width)  / (total_width  - original_width)
   endif
 
@@ -174,11 +224,16 @@ function! Resize(plus)
     let new_desired_height = original_height
     let height_ratio = 1.0
   else
-    let new_desired_height = Max([Min([original_height*ratio, total_height]),0])
+    let new_desired_height = Clamp(original_height*ratio, 0, total_height)
     let height_ratio = 1.0 * (total_height - new_desired_height) / (total_height - original_height)
   endif
 
-  let resized = MappedValues({v->Mapped({w->Resized(width_ratio, height_ratio, w)},v)}, wins_size)
+  let resized = FMapValues(FMap(
+  \  FUpdateAt(F(
+  \    FUpdateAt({w->w*width_ratio},['width']),
+  \    FUpdateAt({h->h*height_ratio},['height'])
+  \  ),['size'])
+  \))(wins_size)
 
   let new_desired_size = {
   \  'window': win,
